@@ -186,7 +186,6 @@ func Inspect(args []string) {
 	printField("Downloads", getNum(skill, "downloads"))
 	printField("Stars", getNum(skill, "starsCount"))
 	printField("Versions", getNum(skill, "versionsCount"))
-	printField("Visibility", getStr(skill, "visibility"))
 	printField("Status", getStr(skill, "moderationStatus"))
 
 	if tags, ok := skill["tags"]; ok {
@@ -228,24 +227,13 @@ func Inspect(args []string) {
 	}
 }
 
-// localSlug extracts the bare slug from a ref like "@namespace/slug" → "slug".
-func localSlug(ref string) string {
-	if strings.HasPrefix(ref, "@") {
-		if idx := strings.IndexByte(ref[1:], '/'); idx > 0 {
-			return ref[idx+2:]
-		}
-	}
-	return ref
-}
-
 // Install downloads and installs a skill locally.
 func Install(args []string) {
 	if len(args) == 0 {
-		exitWithError("Usage: skillhub install <slug|@namespace/slug> [--version <version>]")
+		exitWithError("Usage: skillhub install <slug> [--version <version>]")
 	}
 
-	ref := args[0]
-	dirName := localSlug(ref)
+	slug := args[0]
 	version := "latest"
 	for i, a := range args {
 		if a == "--version" && i+1 < len(args) {
@@ -258,9 +246,9 @@ func Install(args []string) {
 		exitWithError(err.Error())
 	}
 
-	fmt.Printf("Downloading %s@%s...\n", ref, version)
+	fmt.Printf("Downloading %s@%s...\n", slug, version)
 
-	body, err := client.Download(ref, version)
+	body, err := client.Download(slug, version)
 	if err != nil {
 		exitWithError(err.Error())
 	}
@@ -273,8 +261,8 @@ func Install(args []string) {
 	}
 
 	// Create skill directory
-	skillDir := filepath.Join(loadSkillsDir(), dirName)
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+	skillDir := filepath.Join(loadSkillsDir(), slug)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
 		exitWithError(fmt.Sprintf("creating directory: %v", err))
 	}
 
@@ -311,7 +299,7 @@ func Install(args []string) {
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 			exitWithError(fmt.Sprintf("creating directory: %v", err))
 		}
 
@@ -339,13 +327,12 @@ func Install(args []string) {
 	meta := map[string]interface{}{
 		"version":     version,
 		"installedAt": time.Now().UTC().Format(time.RFC3339),
-		"slug":        dirName,
-		"ref":         ref,
+		"slug":        slug,
 	}
 	metaData, _ := json.MarshalIndent(meta, "", "  ")
-	_ = os.WriteFile(filepath.Join(skillDir, ".installed.json"), metaData, 0o644)
+	os.WriteFile(filepath.Join(skillDir, ".installed.json"), metaData, 0644)
 
-	printSuccess(fmt.Sprintf("Installed %s@%s to %s", ref, version, skillDir))
+	printSuccess(fmt.Sprintf("Installed %s@%s to %s", slug, version, skillDir))
 }
 
 // Uninstall removes a locally installed skill.
@@ -394,8 +381,7 @@ func Installed(args []string) {
 			continue
 		}
 		var meta map[string]interface{}
-		// 损坏的 .installed.json 仍想列出条目（getStr 对 nil map 安全），打印 unknown。
-		_ = json.Unmarshal(data, &meta)
+		json.Unmarshal(data, &meta)
 		rows = append(rows, []string{
 			entry.Name(),
 			getStr(meta, "version"),
@@ -466,19 +452,19 @@ func Update(args []string) {
 			continue
 		}
 		var meta map[string]interface{}
-		_ = json.Unmarshal(data, &meta)
+		json.Unmarshal(data, &meta)
 		currentVer := getStr(meta, "version")
 
-		// Use stored ref (e.g. "@namespace/slug") if available, fall back to dir name.
-		ref := getStr(meta, "ref")
-		if ref == "" {
-			ref = slug
+		// Check latest version from registry
+		skill, err := client.GetSkill(slug)
+		if err != nil {
+			fmt.Printf("  %s: failed to check (%v)\n", slug, err)
+			continue
 		}
 
 		// Get latest version info via versions endpoint
-		versions, err := client.GetVersions(ref)
+		versions, err := client.GetVersions(slug)
 		if err != nil {
-			fmt.Printf("  %s: failed to check (%v)\n", slug, err)
 			continue
 		}
 		vList := getSlice(versions, "data")
@@ -492,14 +478,15 @@ func Update(args []string) {
 			continue
 		}
 		latestVer := getStr(latestMap, "version")
+		_ = skill
 
 		if latestVer == currentVer {
 			fmt.Printf("  %s: up to date (%s)\n", slug, currentVer)
 			continue
 		}
 
-		fmt.Printf("  %s: %s → %s, updating...\n", ref, currentVer, latestVer)
-		Install([]string{ref, "--version", latestVer})
+		fmt.Printf("  %s: %s → %s, updating...\n", slug, currentVer, latestVer)
+		Install([]string{slug, "--version", latestVer})
 		updated++
 	}
 
@@ -522,7 +509,6 @@ func Publish(args []string) {
 	tags := getFlag(args[1:], "--tags")
 	summary := getFlag(args[1:], "--summary")
 	changelog := getFlag(args[1:], "--changelog")
-	category := getFlag(args[1:], "--category")
 
 	// Verify directory exists
 	info, err := os.Stat(dirPath)
@@ -561,20 +547,17 @@ func Publish(args []string) {
 	}
 	fmt.Printf("  Files: %d\n", len(files))
 
-	result, err := client.Publish(slug, version, summary, tags, changelog, category, files)
+	result, err := client.Publish(slug, version, summary, tags, changelog, files)
 	if err != nil {
 		exitWithError(err.Error())
 	}
 
-	// Extract version info from the Agent Skill API response.
-	if data, ok := result["data"].(map[string]interface{}); ok {
-		if vMap, ok := data["version"].(map[string]interface{}); ok {
-			printSuccess(fmt.Sprintf("Published %s@%s", slug, getStr(vMap, "version")))
-			return
-		}
+	// Extract version info from result
+	if vMap, ok := result["version"].(map[string]interface{}); ok {
+		printSuccess(fmt.Sprintf("Published %s@%s", slug, getStr(vMap, "version")))
+	} else {
+		printSuccess(fmt.Sprintf("Published %s", slug))
 	}
-
-	printSuccess(fmt.Sprintf("Published %s", slug))
 }
 
 // PrintUsage prints CLI usage help.
@@ -600,30 +583,12 @@ Commands:
   publish <path> [flags]        Publish a skill to the registry
     --slug <slug>               Skill slug (or set 'name' in SKILL.md)
     --version <version>         Semantic version
-    --category <category>       Category (devops,security,data,frontend,backend,infra,testing,ai,general)
     --tags <tags>               Comma-separated tags
     --summary <text>            Short description
     --changelog <text>          Changelog for this version
 
-  plugin <subcmd>               Manage Codex plugins
-    publish <path> [flags]      Publish a plugin (.codex-plugin/plugin.json or plugin.json)
-    list                        List plugins from the registry
-    inspect <slug>              Show plugin metadata
-    install <slug>              Install plugin locally (default: ~/plugins)
-    update [--all] [slug...]    Update installed plugins
-    delete|undelete <slug>      Registry lifecycle operations
-    yank|unyank <slug> <ver>    Version lifecycle operations
-  Run 'skillhub plugin help' for full flag reference.
-
-  team-token <subcmd>           Manage namespace-bound team tokens
-    list <namespace>            List active team tokens
-    create <namespace> [flags]  Create a team token (--label, --scope, --expires-in REQUIRED)
-    revoke <namespace> <id>     Revoke a team token
-  Run 'skillhub team-token help' for full flag reference.
-
 Configuration is stored in ~/.skillhub/config.yaml
-Installed skills are stored in ~/.skillhub/skills/ (configurable via skills_dir in config.yaml)
-Installed plugins are stored in ~/plugins/ (configurable via plugins_dir in config.yaml)`)
+Installed skills are stored in ~/.skillhub/skills/ (configurable via skills_dir in config.yaml)`)
 }
 
 // --- helpers ---

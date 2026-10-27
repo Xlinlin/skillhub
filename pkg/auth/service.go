@@ -4,12 +4,11 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/saker-ai/skillhub/pkg/model"
-	"github.com/saker-ai/skillhub/pkg/repository"
+	"github.com/cinience/skillhub/pkg/model"
+	"github.com/cinience/skillhub/pkg/repository"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -22,56 +21,19 @@ func NewService(tokenRepo *repository.TokenRepo, userRepo *repository.UserRepo) 
 	return &Service{tokenRepo: tokenRepo, userRepo: userRepo}
 }
 
-// CreateToken generates a new personal API token for a user.
-//
-// scope: "full" (default), "read", or "publish".
-// expiresIn: optional duration; if zero, the token never expires.
-//
-// 用 personal token 调用写操作时，作者身份 = userID。需要把 token 绑定到团队
-// (namespace) 时改用 CreateNamespaceToken。
-func (s *Service) CreateToken(ctx context.Context, userID uuid.UUID, label, scope string, expiresIn time.Duration) (string, *model.APIToken, error) {
-	return s.createToken(ctx, userID, nil, label, scope, expiresIn)
-}
-
-// CreateNamespaceToken 在 CreateToken 基础上把 token 绑定到指定 namespace。
-//
-// 调用方负责先校验 userID 在该 namespace 内具备 owner/admin 角色——本服务层只
-// 落库，不做权限判断。
-//
-// 行为约束（在 SkillService.PublishVersion / 删除 / yank 等写路径强制执行）：
-//   - 写操作的目标 skill 必须挂在 namespaceID 下，否则一律拒绝；
-//   - 读操作不受 namespace 限制，遵循 skill.visibility 即可；
-//   - token 的 author 仍是创建该 token 的 userID，便于审计追责。
-func (s *Service) CreateNamespaceToken(ctx context.Context, userID, namespaceID uuid.UUID, label, scope string, expiresIn time.Duration) (string, *model.APIToken, error) {
-	return s.createToken(ctx, userID, &namespaceID, label, scope, expiresIn)
-}
-
-func (s *Service) createToken(ctx context.Context, userID uuid.UUID, namespaceID *uuid.UUID, label, scope string, expiresIn time.Duration) (string, *model.APIToken, error) {
+// CreateToken generates a new API token for a user.
+func (s *Service) CreateToken(ctx context.Context, userID uuid.UUID, label string) (string, *model.APIToken, error) {
 	rawToken, prefix, tokenHash, err := GenerateToken("")
 	if err != nil {
 		return "", nil, err
 	}
 
-	if scope == "" {
-		scope = "full"
-	}
-	if scope != "full" && scope != "read" && scope != "publish" {
-		return "", nil, fmt.Errorf("invalid scope: %s", scope)
-	}
-
 	token := &model.APIToken{
-		ID:          uuid.New(),
-		UserID:      userID,
-		NamespaceID: namespaceID,
-		Label:       &label,
-		Prefix:      prefix,
-		TokenHash:   tokenHash,
-		Scope:       scope,
-	}
-
-	if expiresIn > 0 {
-		exp := time.Now().Add(expiresIn)
-		token.ExpiresAt = &exp
+		ID:        uuid.New(),
+		UserID:    userID,
+		Label:     &label,
+		Prefix:    prefix,
+		TokenHash: tokenHash,
 	}
 
 	if err := s.tokenRepo.Create(ctx, token); err != nil {
@@ -81,17 +43,12 @@ func (s *Service) createToken(ctx context.Context, userID uuid.UUID, namespaceID
 	return rawToken, token, nil
 }
 
-// ValidateToken validates a raw token and returns the associated user, scope and
-// optional namespace binding.
-//
-// 第三个返回值是 token 绑定的 namespaceID：
-//   - nil：personal token，写操作不受 namespace 约束。
-//   - non-nil：team token，调用方应在写路径上把它当成"必须命中此 namespace 的硬约束"。
-func (s *Service) ValidateToken(ctx context.Context, rawToken string) (*model.User, string, *uuid.UUID, error) {
+// ValidateToken validates a raw token and returns the associated user.
+func (s *Service) ValidateToken(ctx context.Context, rawToken string) (*model.User, error) {
 	prefix := ExtractPrefix(rawToken)
 	tokens, err := s.tokenRepo.GetByPrefix(ctx, prefix)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, err
 	}
 
 	tokenHash := HashToken(rawToken)
@@ -103,26 +60,21 @@ func (s *Service) ValidateToken(ctx context.Context, rawToken string) (*model.Us
 				continue
 			}
 
-			// Update last used (fire and forget) —— 写失败只丢一次时间戳，下次仍可恢复，
-			// 不希望它阻塞 hot-path 的 token 校验。
-			go func(id uuid.UUID) { _ = s.tokenRepo.UpdateLastUsed(context.Background(), id) }(t.ID)
+			// Update last used (fire and forget)
+			go s.tokenRepo.UpdateLastUsed(context.Background(), t.ID)
 
 			user, err := s.userRepo.GetByID(ctx, t.UserID)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, err
 			}
 			if user == nil || user.IsBanned {
-				return nil, "", nil, nil
+				return nil, nil
 			}
-			scope := t.Scope
-			if scope == "" {
-				scope = "full"
-			}
-			return user, scope, t.NamespaceID, nil
+			return user, nil
 		}
 	}
 
-	return nil, "", nil, nil
+	return nil, nil
 }
 
 // HashPassword hashes a plaintext password using bcrypt.
@@ -158,9 +110,9 @@ func (s *Service) Login(ctx context.Context, handle, password string) (string, *
 		return "", nil, errors.New("invalid username or password")
 	}
 
-	// Create a session token (30-day expiry)
+	// Create a session token
 	label := "web-session"
-	rawToken, _, err := s.CreateToken(ctx, user.ID, label, "full", 30*24*time.Hour)
+	rawToken, _, err := s.CreateToken(ctx, user.ID, label)
 	if err != nil {
 		return "", nil, err
 	}
@@ -168,11 +120,8 @@ func (s *Service) Login(ctx context.Context, handle, password string) (string, *
 	return rawToken, user, nil
 }
 
-// SetPassword sets a user's password hash after validating complexity.
+// SetPassword sets a user's password hash.
 func (s *Service) SetPassword(ctx context.Context, userID uuid.UUID, password string) error {
-	if len(password) < 8 {
-		return errors.New("password must be at least 8 characters")
-	}
 	hash, err := HashPassword(password)
 	if err != nil {
 		return err

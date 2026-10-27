@@ -5,7 +5,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,17 +14,14 @@ type Config struct {
 	Database  DatabaseConfig  `yaml:"database"`
 	Search    SearchConfig    `yaml:"search"`
 	GitStore  GitStoreConfig  `yaml:"gitstore"`
-	Store     StoreConfig     `yaml:"store"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	Auth      AuthConfig      `yaml:"auth"`
-	Cache     CacheConfig     `yaml:"cache"`
 }
 
 type ServerConfig struct {
-	Port     int    `yaml:"port"`
-	Host     string `yaml:"host"`
-	BaseURL  string `yaml:"base_url"`
-	BasePath string `yaml:"base_path"`
+	Port    int    `yaml:"port"`
+	Host    string `yaml:"host"`
+	BaseURL string `yaml:"base_url"`
 }
 
 type DatabaseConfig struct {
@@ -33,7 +29,6 @@ type DatabaseConfig struct {
 	URL          string `yaml:"url"`    // SQLite file path or PostgreSQL DSN
 	MaxOpenConns int    `yaml:"max_open_conns"`
 	MaxIdleConns int    `yaml:"max_idle_conns"`
-	AutoMigrate  bool   `yaml:"auto_migrate"`
 }
 
 type SearchConfig struct {
@@ -44,30 +39,6 @@ type GitStoreConfig struct {
 	BasePath string       `yaml:"base_path"`
 	Mirror   MirrorConfig `yaml:"mirror"`
 	Import   ImportConfig `yaml:"import"`
-}
-
-type StoreConfig struct {
-	Backend string         `yaml:"backend"` // "git" (default) | "s3" | "oss"
-	S3      StoreS3Config  `yaml:"s3"`
-	OSS     StoreOSSConfig `yaml:"oss"`
-}
-
-type StoreS3Config struct {
-	Bucket    string `yaml:"bucket"`
-	Region    string `yaml:"region"`
-	Prefix    string `yaml:"prefix"`     // object key prefix, default "skills"
-	Endpoint  string `yaml:"endpoint"`   // custom endpoint (MinIO, etc.)
-	AccessKey string `yaml:"access_key"` // optional, defaults to IAM
-	SecretKey string `yaml:"secret_key"`
-}
-
-type StoreOSSConfig struct {
-	Bucket    string `yaml:"bucket"`
-	Region    string `yaml:"region"`   // e.g. "cn-hangzhou"
-	Prefix    string `yaml:"prefix"`   // object key prefix, default "skills"
-	Endpoint  string `yaml:"endpoint"` // e.g. "oss-cn-hangzhou.aliyuncs.com"
-	AccessKey string `yaml:"access_key"`
-	SecretKey string `yaml:"secret_key"`
 }
 
 type MirrorConfig struct {
@@ -98,41 +69,7 @@ type RateLimitConfig struct {
 }
 
 type AuthConfig struct {
-	TokenPrefix  string                         `yaml:"token_prefix"`
-	InternalAuth InternalAuthConfig             `yaml:"internal_auth"`
-	OAuth        map[string]OAuthProviderConfig `yaml:"oauth"`
-}
-
-type InternalAuthConfig struct {
-	Enabled                    bool          `yaml:"enabled"`
-	Issuer                     string        `yaml:"issuer"`
-	Audience                   string        `yaml:"audience"`
-	MasterSecret               string        `yaml:"master_secret"`
-	TTL                        time.Duration `yaml:"ttl"`
-	ClockSkew                  time.Duration `yaml:"clock_skew"`
-	AllowAuthorizationFallback bool          `yaml:"allow_authorization_fallback"`
-}
-
-// CacheConfig 配置内存级缓存层。当前唯一消费方是 *repository.SkillRepo
-// 的 GetBySlug/GetBySlugOrAlias 路径——首页 / inspect / install 高频调用。
-//
-// SkillCacheSize <= 0 等价于关闭缓存（NewSkillCache 返回 nil；repo 自动绕过）；
-// SkillCacheTTL <= 0 时 expirable.LRU 退化为不带 TTL 的纯 LRU。
-//
-// 失效策略：service 层在 metadata 写入（visibility / moderation / soft-delete /
-// rename）时显式调用 InvalidateCache(slug)；counters（downloads / stars / ratings）
-// 不主动失效——这些字段是 denormalized cache，TTL 内的轻微落后可以接受，
-// 否则热门 skill 每次下载都会让缓存失效，命中率退化为 0。
-type CacheConfig struct {
-	SkillCacheSize int           `yaml:"skill_cache_size"` // default 1024; <=0 disables
-	SkillCacheTTL  time.Duration `yaml:"skill_cache_ttl"`  // default 5m
-}
-
-type OAuthProviderConfig struct {
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
-	BaseURL      string `yaml:"base_url"`  // for self-hosted GitLab etc.
-	SyncOrgs     bool   `yaml:"sync_orgs"` // auto-create namespace per org membership
+	TokenPrefix string `yaml:"token_prefix"`
 }
 
 func DefaultConfig() *Config {
@@ -147,7 +84,6 @@ func DefaultConfig() *Config {
 			URL:          "./data/skillhub.db",
 			MaxOpenConns: 25,
 			MaxIdleConns: 5,
-			AutoMigrate:  true,
 		},
 		Search: SearchConfig{
 			IndexPath: "./data/skills.bleve",
@@ -175,15 +111,6 @@ func DefaultConfig() *Config {
 		},
 		Auth: AuthConfig{
 			TokenPrefix: "clh_",
-			InternalAuth: InternalAuthConfig{
-				Issuer:   "synapse",
-				Audience: "skillhub",
-				TTL:      5 * time.Minute,
-			},
-		},
-		Cache: CacheConfig{
-			SkillCacheSize: 1024,
-			SkillCacheTTL:  5 * time.Minute,
 		},
 	}
 }
@@ -220,34 +147,6 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("SKILLHUB_BASE_URL"); v != "" {
 		cfg.Server.BaseURL = strings.TrimRight(v, "/")
 	}
-	if v := os.Getenv("SKILLHUB_BASE_PATH"); v != "" {
-		cfg.Server.BasePath = "/" + strings.Trim(v, "/")
-	}
-	if v := os.Getenv("SKILLHUB_INTERNAL_AUTH_ENABLED"); v != "" {
-		cfg.Auth.InternalAuth.Enabled = v == "true" || v == "1"
-	}
-	if v := os.Getenv("SKILLHUB_INTERNAL_AUTH_ISSUER"); v != "" {
-		cfg.Auth.InternalAuth.Issuer = v
-	}
-	if v := os.Getenv("SKILLHUB_INTERNAL_AUTH_AUDIENCE"); v != "" {
-		cfg.Auth.InternalAuth.Audience = v
-	}
-	if v := os.Getenv("SKILLHUB_INTERNAL_AUTH_MASTER_SECRET"); v != "" {
-		cfg.Auth.InternalAuth.MasterSecret = v
-	}
-	if v := os.Getenv("SKILLHUB_INTERNAL_AUTH_TTL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			cfg.Auth.InternalAuth.TTL = d
-		}
-	}
-	if v := os.Getenv("SKILLHUB_INTERNAL_AUTH_CLOCK_SKEW"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			cfg.Auth.InternalAuth.ClockSkew = d
-		}
-	}
-	if v := os.Getenv("SKILLHUB_INTERNAL_AUTH_ALLOW_AUTHORIZATION_FALLBACK"); v != "" {
-		cfg.Auth.InternalAuth.AllowAuthorizationFallback = v == "true" || v == "1"
-	}
 	if v := os.Getenv("SKILLHUB_DB_DRIVER"); v != "" {
 		cfg.Database.Driver = v
 	}
@@ -259,77 +158,5 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("SKILLHUB_GIT_PATH"); v != "" {
 		cfg.GitStore.BasePath = v
-	}
-
-	// Store backend env overrides
-	if v := os.Getenv("SKILLHUB_STORE_BACKEND"); v != "" {
-		cfg.Store.Backend = v
-	}
-	if v := os.Getenv("SKILLHUB_S3_BUCKET"); v != "" {
-		cfg.Store.S3.Bucket = v
-	}
-	if v := os.Getenv("SKILLHUB_S3_REGION"); v != "" {
-		cfg.Store.S3.Region = v
-	}
-	if v := os.Getenv("SKILLHUB_S3_PREFIX"); v != "" {
-		cfg.Store.S3.Prefix = v
-	}
-	if v := os.Getenv("SKILLHUB_S3_ENDPOINT"); v != "" {
-		cfg.Store.S3.Endpoint = v
-	}
-	if v := os.Getenv("SKILLHUB_S3_ACCESS_KEY"); v != "" {
-		cfg.Store.S3.AccessKey = v
-	}
-	if v := os.Getenv("SKILLHUB_S3_SECRET_KEY"); v != "" {
-		cfg.Store.S3.SecretKey = v
-	}
-	if v := os.Getenv("SKILLHUB_OSS_BUCKET"); v != "" {
-		cfg.Store.OSS.Bucket = v
-	}
-	if v := os.Getenv("SKILLHUB_OSS_REGION"); v != "" {
-		cfg.Store.OSS.Region = v
-	}
-	if v := os.Getenv("SKILLHUB_OSS_PREFIX"); v != "" {
-		cfg.Store.OSS.Prefix = v
-	}
-	if v := os.Getenv("SKILLHUB_OSS_ENDPOINT"); v != "" {
-		cfg.Store.OSS.Endpoint = v
-	}
-	if v := os.Getenv("SKILLHUB_OSS_ACCESS_KEY"); v != "" {
-		cfg.Store.OSS.AccessKey = v
-	}
-	if v := os.Getenv("SKILLHUB_OSS_SECRET_KEY"); v != "" {
-		cfg.Store.OSS.SecretKey = v
-	}
-
-	// Cache env overrides
-	if v := os.Getenv("SKILLHUB_SKILL_CACHE_SIZE"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.Cache.SkillCacheSize = n
-		}
-	}
-	if v := os.Getenv("SKILLHUB_SKILL_CACHE_TTL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			cfg.Cache.SkillCacheTTL = d
-		}
-	}
-
-	// OAuth env overrides
-	if cfg.Auth.OAuth == nil {
-		cfg.Auth.OAuth = make(map[string]OAuthProviderConfig)
-	}
-	for _, provider := range []string{"github", "gitlab"} {
-		prefix := "SKILLHUB_OAUTH_" + strings.ToUpper(provider) + "_"
-		clientID := os.Getenv(prefix + "CLIENT_ID")
-		clientSecret := os.Getenv(prefix + "CLIENT_SECRET")
-		if clientID != "" && clientSecret != "" {
-			p := cfg.Auth.OAuth[provider]
-			p.ClientID = clientID
-			p.ClientSecret = clientSecret
-			if baseURL := os.Getenv(prefix + "BASE_URL"); baseURL != "" {
-				p.BaseURL = baseURL
-			}
-			cfg.Auth.OAuth[provider] = p
-		}
 	}
 }

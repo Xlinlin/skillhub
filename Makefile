@@ -1,20 +1,15 @@
-.PHONY: build deps dev run setup clean help quickstart test ensure-static test-static lint frontend dev-frontend dev-backend
-
-VITE_BASE_PATH ?= ./
+.PHONY: build deps dev setup clean help quickstart test frontend dev-frontend dev-backend
 
 # Build frontend (React + Vite)
 frontend:
-	cd web && pnpm install --prefer-offline && VITE_BASE_PATH="$(VITE_BASE_PATH)" npm run build
+	cd web && npm install && npm run build
 
 # Build the skillhub binary (includes embedded frontend)
 build: frontend
 	go build -o skillhub ./cmd/skillhub/
 
-# Ensure the embed target exists for Go-only commands in a clean checkout.
-ensure-static: test-static
-
-# Build Go only (skip frontend)
-build-go: ensure-static
+# Build Go only (skip frontend, assumes web/static/ exists)
+build-go:
 	go build -o skillhub ./cmd/skillhub/
 
 # Download Go dependencies
@@ -58,10 +53,6 @@ setup: build
 	@echo "  Web login:     http://localhost:10070/login"
 	@echo "  Username:      $(ADMIN_USER)"
 
-# Build frontend + Go binary, then start server
-run: build
-	./skillhub serve
-
 # Start server in development mode
 dev: build
 	./skillhub serve
@@ -91,36 +82,8 @@ clean:
 	@echo "Cleaned."
 
 # Run tests
-#
-# 排除 web/node_modules —— npm 包 flatted 顺手附带了一个 Go 实现
-# (web/node_modules/flatted/golang/pkg/flatted/flatted.go),`go test ./...`
-# 会把它当成项目包扫;过滤掉之后测试输出干净、跑得也快。
-# 不能用 web/go.mod 隔离,因为父模块 import "github.com/saker-ai/skillhub/web"
-# 取 embed.FS,加 nested go.mod 会切断这条 import。
-test: test-static
-	go test $$(go list ./... | grep -v /web/node_modules/)
-
-# Create the smallest embedded frontend tree needed by Go tests when the
-# real Vite build has not been generated yet. The files live under ignored
-# web/static/ so production builds can freely replace them.
-test-static:
-	@mkdir -p web/static/assets web/static/swagger
-	@printf '<!doctype html><title>SkillHub test shell</title><div id="root"></div>\n' > web/static/index.html
-	@cp -f web/public/swagger-init.js web/static/swagger-init.js
-	@printf '/* test placeholder for swagger-ui-dist */\n' > web/static/swagger/swagger-ui.css
-	@printf 'window.SwaggerUIBundle=window.SwaggerUIBundle||function(){return {}};window.SwaggerUIBundle.presets={apis:[]};\n' > web/static/swagger/swagger-ui-bundle.js
-	@printf '' > web/static/assets/.gitkeep
-
-# Lint
-#
-# golangci-lint run 期待文件/目录路径(不接受全限定 import path),
-# 所以用 `go list -f '{{.Dir}}'` 把包路径转成绝对目录,再过滤掉
-# web/node_modules(同 test 目标的理由)。
-lint:
-	@command -v golangci-lint >/dev/null 2>&1 || { \
-		echo "golangci-lint not installed: https://golangci-lint.run/usage/install/"; exit 1; \
-	}
-	golangci-lint run $$(go list -f '{{.Dir}}' ./... | grep -v /web/node_modules/)
+test:
+	go test ./...
 
 # Show help
 help:
@@ -147,7 +110,6 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  quickstart    - One-click: build + create admin + start server (SQLite)"
-	@echo "  run           - Build frontend + Go binary, then start server"
 	@echo "  build         - Build frontend + Go binary"
 	@echo "  build-go      - Build Go binary only (skip frontend)"
 	@echo "  frontend      - Build frontend only"

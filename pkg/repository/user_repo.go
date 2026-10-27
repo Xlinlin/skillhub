@@ -2,13 +2,11 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/saker-ai/skillhub/pkg/model"
+	"github.com/cinience/skillhub/pkg/model"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type UserRepo struct {
@@ -23,29 +21,10 @@ func (r *UserRepo) Create(ctx context.Context, user *model.User) error {
 	return r.db.WithContext(ctx).Create(user).Error
 }
 
-// UpsertIdentity stores a user supplied by an external identity provider.
-// It keeps the local user row available for repository joins while allowing
-// display metadata and role claims to follow the upstream identity source.
-func (r *UserRepo) UpsertIdentity(ctx context.Context, user *model.User) error {
-	if user == nil {
-		return nil
-	}
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"handle",
-			"display_name",
-			"email",
-			"role",
-			"updated_at",
-		}),
-	}).Create(user).Error
-}
-
 func (r *UserRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	var user model.User
 	err := r.db.WithContext(ctx).Where("id = ?", id).First(&user).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err == gorm.ErrRecordNotFound {
 		return nil, nil
 	}
 	return &user, err
@@ -54,7 +33,7 @@ func (r *UserRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.User, erro
 func (r *UserRepo) GetByHandle(ctx context.Context, handle string) (*model.User, error) {
 	var user model.User
 	err := r.db.WithContext(ctx).Where("handle = ?", handle).First(&user).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err == gorm.ErrRecordNotFound {
 		return nil, nil
 	}
 	return &user, err
@@ -110,15 +89,6 @@ func (r *UserRepo) Unban(ctx context.Context, id uuid.UUID) error {
 			"ban_reason": nil,
 			"updated_at": time.Now(),
 		}).Error
-}
-
-func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*model.User, error) {
-	var user model.User
-	err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &user, err
 }
 
 func (r *UserRepo) SetPassword(ctx context.Context, id uuid.UUID, passwordHash string) error {

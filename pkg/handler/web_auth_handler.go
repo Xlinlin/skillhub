@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saker-ai/skillhub/pkg/auth"
+	"github.com/cinience/skillhub/pkg/auth"
 )
 
 // WebAuthHandler handles login/logout for the SPA frontend.

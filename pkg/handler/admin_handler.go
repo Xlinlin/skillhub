@@ -3,27 +3,21 @@ package handler
 import (
 	"net/http"
 	"slices"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/saker-ai/skillhub/pkg/middleware"
-	"github.com/saker-ai/skillhub/pkg/model"
-	"github.com/saker-ai/skillhub/pkg/repository"
-	"github.com/saker-ai/skillhub/pkg/service"
+	"github.com/cinience/skillhub/pkg/model"
+	"github.com/cinience/skillhub/pkg/repository"
 )
 
 var validRoles = []string{"user", "moderator", "admin"}
 
 type AdminHandler struct {
-	userRepo  *repository.UserRepo
-	skillSvc  *service.SkillService
-	pluginSvc *service.PluginService
-	auditSvc  *service.AuditService
+	userRepo *repository.UserRepo
 }
 
-func NewAdminHandler(userRepo *repository.UserRepo, skillSvc *service.SkillService, pluginSvc *service.PluginService, auditSvc *service.AuditService) *AdminHandler {
-	return &AdminHandler{userRepo: userRepo, skillSvc: skillSvc, pluginSvc: pluginSvc, auditSvc: auditSvc}
+func NewAdminHandler(userRepo *repository.UserRepo) *AdminHandler {
+	return &AdminHandler{userRepo: userRepo}
 }
 
 // BanUser handles POST /api/v1/users/ban
@@ -44,17 +38,8 @@ func (h *AdminHandler) BanUser(c *gin.Context) {
 	}
 
 	if err := h.userRepo.Ban(c.Request.Context(), userID, req.Reason); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to ban user"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-	}
-
-	if h.auditSvc != nil {
-		admin := middleware.GetUser(c)
-		var adminID *uuid.UUID
-		if admin != nil {
-			adminID = &admin.ID
-		}
-		h.auditSvc.Log(c.Request.Context(), adminID, "ban_user", "user", &userID, req.Reason, c.ClientIP())
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "user banned"})
@@ -83,17 +68,8 @@ func (h *AdminHandler) SetRole(c *gin.Context) {
 	}
 
 	if err := h.userRepo.UpdateRole(c.Request.Context(), userID, req.Role); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update role"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-	}
-
-	if h.auditSvc != nil {
-		admin := middleware.GetUser(c)
-		var adminID *uuid.UUID
-		if admin != nil {
-			adminID = &admin.ID
-		}
-		h.auditSvc.Log(c.Request.Context(), adminID, "set_role", "user", &userID, req.Role, c.ClientIP())
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "role updated"})
@@ -104,7 +80,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 	cursor := c.Query("cursor")
 	users, nextCursor, err := h.userRepo.List(c.Request.Context(), 20, cursor)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list users"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -149,143 +125,9 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 	}
 
 	if err := h.userRepo.Create(c.Request.Context(), user); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusCreated, user)
-}
-
-// ListAllSkills handles GET /api/v1/admin/skills
-// Supports ?visibility=private|public|pending|all (default: all)
-func (h *AdminHandler) ListAllSkills(c *gin.Context) {
-	visibility := c.DefaultQuery("visibility", "")
-	cursor := c.Query("cursor")
-	limit := 20
-	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 100 {
-		limit = l
-	}
-
-	skills, nextCursor, err := h.skillSvc.ListAllSkillsForAdmin(c.Request.Context(), limit, cursor, visibility)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list skills"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data":       skills,
-		"nextCursor": nextCursor,
-	})
-}
-
-// ReviewSkill handles POST /api/v1/admin/skills/:slug/review
-func (h *AdminHandler) ReviewSkill(c *gin.Context) {
-	var req struct {
-		Action string `json:"action" binding:"required"` // "approve" or "reject"
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request, action is required"})
-		return
-	}
-
-	approve := req.Action == "approve"
-	if req.Action != "approve" && req.Action != "reject" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "action must be 'approve' or 'reject'"})
-		return
-	}
-
-	var reviewerID *uuid.UUID
-	if admin := middleware.GetUser(c); admin != nil {
-		reviewerID = &admin.ID
-	}
-
-	if err := h.skillSvc.ReviewSkill(c.Request.Context(), reviewerID, extractSkillRef(c), approve); err != nil {
-		writeServiceError(c, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "skill " + req.Action + "d"})
-}
-
-// SetVisibility handles POST /api/v1/admin/skills/:slug/visibility
-func (h *AdminHandler) SetVisibility(c *gin.Context) {
-	var req struct {
-		Visibility string `json:"visibility" binding:"required"` // "public" or "private"
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request, visibility is required"})
-		return
-	}
-
-	var adminID *uuid.UUID
-	if admin := middleware.GetUser(c); admin != nil {
-		adminID = &admin.ID
-	}
-
-	if err := h.skillSvc.SetSkillVisibility(c.Request.Context(), adminID, extractSkillRef(c), req.Visibility); err != nil {
-		writeServiceError(c, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "visibility updated to " + req.Visibility})
-}
-
-func (h *AdminHandler) ListAllPlugins(c *gin.Context) {
-	limit := 20
-	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 100 {
-		limit = l
-	}
-	cursor := c.Query("cursor")
-	visibility := c.Query("visibility")
-
-	plugins, nextCursor, err := h.pluginSvc.ListAllForAdmin(c.Request.Context(), limit, cursor, visibility)
-	if err != nil {
-		writeInternalError(c, "admin_list_plugins", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"data":       plugins,
-		"nextCursor": nextCursor,
-	})
-}
-
-func (h *AdminHandler) ReviewPlugin(c *gin.Context) {
-	slug := c.Param("slug")
-	var req struct {
-		Action string `json:"action"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || (req.Action != "approve" && req.Action != "reject") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "action must be 'approve' or 'reject'"})
-		return
-	}
-	var reviewerID *uuid.UUID
-	if admin := middleware.GetUser(c); admin != nil {
-		reviewerID = &admin.ID
-	}
-	approve := req.Action == "approve"
-	if err := h.pluginSvc.ReviewPlugin(c.Request.Context(), reviewerID, slug, approve); err != nil {
-		writeServiceError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "plugin " + req.Action + "d"})
-}
-
-func (h *AdminHandler) SetPluginVisibility(c *gin.Context) {
-	slug := c.Param("slug")
-	var req struct {
-		Visibility string `json:"visibility"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "visibility is required"})
-		return
-	}
-	var adminID *uuid.UUID
-	if admin := middleware.GetUser(c); admin != nil {
-		adminID = &admin.ID
-	}
-	if err := h.pluginSvc.SetPluginVisibility(c.Request.Context(), adminID, slug, req.Visibility); err != nil {
-		writeServiceError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "visibility updated"})
 }

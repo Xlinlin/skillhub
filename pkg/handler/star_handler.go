@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saker-ai/skillhub/pkg/middleware"
-	"github.com/saker-ai/skillhub/pkg/service"
+	"github.com/cinience/skillhub/pkg/middleware"
+	"github.com/cinience/skillhub/pkg/service"
 )
 
 type StarHandler struct {
@@ -19,9 +19,9 @@ func NewStarHandler(svc *service.SkillService) *StarHandler {
 // Star handles POST /api/v1/stars/:slug
 func (h *StarHandler) Star(c *gin.Context) {
 	user := middleware.GetUser(c)
-	ref := extractSkillRef(c)
+	slug := c.Param("slug")
 
-	if err := h.svc.Star(c.Request.Context(), user.ID, ref); err != nil {
+	if err := h.svc.Star(c.Request.Context(), user.ID, slug); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -32,9 +32,9 @@ func (h *StarHandler) Star(c *gin.Context) {
 // Unstar handles DELETE /api/v1/stars/:slug
 func (h *StarHandler) Unstar(c *gin.Context) {
 	user := middleware.GetUser(c)
-	ref := extractSkillRef(c)
+	slug := c.Param("slug")
 
-	if err := h.svc.Unstar(c.Request.Context(), user.ID, ref); err != nil {
+	if err := h.svc.Unstar(c.Request.Context(), user.ID, slug); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

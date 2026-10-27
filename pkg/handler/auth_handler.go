@@ -5,9 +5,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/saker-ai/skillhub/pkg/auth"
-	"github.com/saker-ai/skillhub/pkg/middleware"
-	"github.com/saker-ai/skillhub/pkg/repository"
+	"github.com/cinience/skillhub/pkg/auth"
+	"github.com/cinience/skillhub/pkg/middleware"
+	"github.com/cinience/skillhub/pkg/repository"
 )
 
 type AuthHandler struct {
@@ -29,12 +29,11 @@ func (h *AuthHandler) WhoAmI(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
-// CreateToken handles POST /api/v1/admin/tokens (admin creates token for any user)
+// CreateToken handles POST /api/v1/tokens
 func (h *AuthHandler) CreateToken(c *gin.Context) {
 	var req struct {
 		UserID string `json:"userId"`
 		Label  string `json:"label"`
-		Scope  string `json:"scope"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -47,9 +46,9 @@ func (h *AuthHandler) CreateToken(c *gin.Context) {
 		return
 	}
 
-	rawToken, token, err := h.authSvc.CreateToken(c.Request.Context(), userID, req.Label, req.Scope, 0)
+	rawToken, token, err := h.authSvc.CreateToken(c.Request.Context(), userID, req.Label)
 	if err != nil {
-		writeInternalError(c, "admin_create_token", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 

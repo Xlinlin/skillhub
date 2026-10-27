@@ -3,18 +3,16 @@ package gitstore
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/saker-ai/skillhub/pkg/semver"
 
 	"github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
@@ -28,7 +26,7 @@ type GitStore struct {
 }
 
 func New(basePath string) (*GitStore, error) {
-	if err := os.MkdirAll(basePath, 0o755); err != nil {
+	if err := os.MkdirAll(basePath, 0755); err != nil {
 		return nil, fmt.Errorf("create git store base path: %w", err)
 	}
 	return &GitStore{basePath: basePath}, nil
@@ -51,7 +49,7 @@ func (g *GitStore) InitRepo(owner, slug string) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil // already exists
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("create owner dir: %w", err)
 	}
 	_, err := git.PlainInit(path, true)
@@ -101,7 +99,7 @@ func (g *GitStore) Publish(ctx context.Context, opts PublishOpts) (string, error
 	})
 	if err != nil {
 		// If repo is empty (no commits yet), init a new repo
-		if errors.Is(err, git.ErrRepositoryAlreadyExists) || strings.Contains(err.Error(), "remote repository is empty") {
+		if err == git.ErrRepositoryAlreadyExists || strings.Contains(err.Error(), "remote repository is empty") {
 			workRepo, err = git.PlainInit(tmpDir, false)
 			if err != nil {
 				return "", fmt.Errorf("init temp repo: %w", err)
@@ -128,10 +126,10 @@ func (g *GitStore) Publish(ctx context.Context, opts PublishOpts) (string, error
 	// Write files
 	for path, content := range opts.Files {
 		fullPath := filepath.Join(tmpDir, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 			return "", fmt.Errorf("create dir for %s: %w", path, err)
 		}
-		if err := os.WriteFile(fullPath, content, 0o644); err != nil {
+		if err := os.WriteFile(fullPath, content, 0644); err != nil {
 			return "", fmt.Errorf("write file %s: %w", path, err)
 		}
 		if _, err := wt.Add(path); err != nil {
@@ -207,20 +205,17 @@ func (g *GitStore) Publish(ctx context.Context, opts PublishOpts) (string, error
 		return "", fmt.Errorf("create latest tag: %w", err)
 	}
 
-	// Create extra tags —— DeleteTag 已用 `_` 吞掉 ENOENT，CreateTag 失败要告诉调用方，
-	// 否则发布流水线会以为成功但远端缺 tag。
+	// Create extra tags
 	for _, tag := range opts.Tags {
 		_ = repo.DeleteTag(tag)
-		if _, err := repo.CreateTag(tag, commitHash, &git.CreateTagOptions{
+		repo.CreateTag(tag, commitHash, &git.CreateTagOptions{
 			Message: tag,
 			Tagger: &object.Signature{
 				Name:  opts.Author,
 				Email: opts.Email,
 				When:  time.Now(),
 			},
-		}); err != nil {
-			return "", fmt.Errorf("create tag %s: %w", tag, err)
-		}
+		})
 	}
 
 	return commitHash.String(), nil
@@ -327,35 +322,9 @@ func (g *GitStore) ListTags(owner, slug string) ([]string, error) {
 
 	// Sort descending by semver
 	sort.Slice(versions, func(i, j int) bool {
-		return semver.Compare(versions[i], versions[j]) > 0
+		return compareSemver(versions[i], versions[j]) > 0
 	})
 	return versions, nil
-}
-
-// DeleteTag deletes a version tag from a bare repo. Idempotent: returns nil if
-// the tag or repo does not exist.
-//
-// Note: this only removes the tag ref. The commit and tree objects remain on
-// the branch until git gc. For orphan cleanup this is acceptable — the files
-// become unreachable via ListTags/Archive/GetFile but the branch history is
-// not rewritten, avoiding the complexity and risk of a forced branch reset.
-func (g *GitStore) DeleteTag(owner, slug, version string) error {
-	repoPath := g.RepoPath(owner, slug)
-	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
-		return nil
-	}
-	repo, err := git.PlainOpen(repoPath)
-	if err != nil {
-		return fmt.Errorf("open repo for tag delete: %w", err)
-	}
-	tagName := "v" + version
-	if err := repo.DeleteTag(tagName); err != nil {
-		if errors.Is(err, git.ErrTagNotFound) {
-			return nil
-		}
-		return fmt.Errorf("delete tag %s: %w", tagName, err)
-	}
-	return nil
 }
 
 // Rename renames a repo and creates a symlink from old to new.
@@ -395,4 +364,31 @@ func (g *GitStore) Mirror(owner, slug, destPath string) error {
 // BasePath returns the base path of the git store.
 func (g *GitStore) BasePath() string {
 	return g.basePath
+}
+
+// compareSemver compares two semver strings. Returns -1, 0, or 1.
+func compareSemver(a, b string) int {
+	ap := parseSemverParts(a)
+	bp := parseSemverParts(b)
+	for i := 0; i < 3; i++ {
+		if ap[i] < bp[i] {
+			return -1
+		}
+		if ap[i] > bp[i] {
+			return 1
+		}
+	}
+	return 0
+}
+
+func parseSemverParts(v string) [3]int {
+	if idx := strings.IndexAny(v, "-+"); idx != -1 {
+		v = v[:idx]
+	}
+	parts := strings.SplitN(v, ".", 3)
+	var result [3]int
+	for i := 0; i < 3 && i < len(parts); i++ {
+		result[i], _ = strconv.Atoi(parts[i])
+	}
+	return result
 }

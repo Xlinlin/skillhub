@@ -7,17 +7,6 @@
     "module": "ESNext",
     "types": ["vite/client"],
     "skipLibCheck": true,
-    "paths": {
-      "@saker/web-shared": ["../../web-shared/src/index.ts"],
-      "@saker/web-shared/*": ["../../web-shared/src/*"],
-      "@saker/skillhub-client": ["../web-client/src/index.ts"],
-      "@saker/skillhub-client/*": ["../web-client/src/*"],
-      "@saker/skillhub-pages": ["../web-pages/src/index.ts"],
-      "@saker/skillhub-pages/*": ["../web-pages/src/*"],
-      "react": ["./node_modules/@types/react"],
-      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
-      "lucide-react": ["./node_modules/lucide-react/dist/lucide-react.d.ts"]
-    },
 
     /* Bundler mode */
     "moduleResolution": "bundler",
@@ -35,6 +24,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"],
-  "exclude": ["src/**/*.test.ts"]
+  "include": ["src"]
 }

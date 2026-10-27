@@ -39,7 +39,7 @@ func printTable(headers []string, widths []int, rows [][]string) {
 	var hdr strings.Builder
 	for i, h := range headers {
 		if i < len(widths) {
-			fmt.Fprintf(&hdr, "%-*s", widths[i], h)
+			hdr.WriteString(fmt.Sprintf("%-*s", widths[i], h))
 		} else {
 			hdr.WriteString(h)
 		}

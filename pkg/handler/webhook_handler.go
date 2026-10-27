@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saker-ai/skillhub/pkg/gitstore"
+	"github.com/cinience/skillhub/pkg/gitstore"
 )
 
 type WebhookHandler struct {
@@ -57,7 +57,7 @@ func (h *WebhookHandler) handleWebhook(c *gin.Context, provider, signature strin
 	event.Provider = provider
 
 	if err := h.importSvc.HandleWebhook(c.Request.Context(), event); err != nil {
-		writeInternalError(c, "handle_webhook", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 

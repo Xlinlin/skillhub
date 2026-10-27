@@ -9,10 +9,9 @@ import (
 )
 
 type CLIConfig struct {
-	Registry   string `yaml:"registry"`
-	Token      string `yaml:"token"`
-	SkillsDir  string `yaml:"skills_dir,omitempty"`
-	PluginsDir string `yaml:"plugins_dir,omitempty"`
+	Registry  string `yaml:"registry"`
+	Token     string `yaml:"token"`
+	SkillsDir string `yaml:"skills_dir,omitempty"`
 }
 
 func configDir() string {
@@ -43,24 +42,6 @@ func SkillsDir(cfg *CLIConfig) string {
 	return filepath.Join(configDir(), "skills")
 }
 
-// PluginsDir returns the directory where Codex plugins are installed.
-// Defaults to ~/plugins, matching Codex's personal plugin scaffold convention.
-func PluginsDir(cfg *CLIConfig) string {
-	if cfg != nil && cfg.PluginsDir != "" {
-		dir := cfg.PluginsDir
-		if len(dir) > 1 && dir[:2] == "~/" {
-			home, _ := os.UserHomeDir()
-			dir = filepath.Join(home, dir[2:])
-		}
-		return dir
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(configDir(), "plugins")
-	}
-	return filepath.Join(home, "plugins")
-}
-
 func LoadConfig() (*CLIConfig, error) {
 	data, err := os.ReadFile(configPath())
 	if err != nil {
@@ -82,7 +63,7 @@ func LoadConfig() (*CLIConfig, error) {
 
 func SaveConfig(cfg *CLIConfig) error {
 	dir := configDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
@@ -91,7 +72,7 @@ func SaveConfig(cfg *CLIConfig) error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
-	if err := os.WriteFile(configPath(), data, 0o600); err != nil {
+	if err := os.WriteFile(configPath(), data, 0600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 	return nil

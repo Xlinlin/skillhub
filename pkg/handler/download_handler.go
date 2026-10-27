@@ -4,144 +4,45 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"log/slog"
-	"mime"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saker-ai/skillhub/pkg/middleware"
-	"github.com/saker-ai/skillhub/pkg/model"
-	"github.com/saker-ai/skillhub/pkg/service"
+	"github.com/cinience/skillhub/pkg/service"
 )
 
 type DownloadHandler struct {
-	svc    *service.SkillService
-	logger *slog.Logger
+	svc *service.SkillService
 }
 
 func NewDownloadHandler(svc *service.SkillService) *DownloadHandler {
 	return &DownloadHandler{svc: svc}
 }
 
-// SetLogger 注入 *slog.Logger。nil 等价于走 slog.Default()。
-func (h *DownloadHandler) SetLogger(lg *slog.Logger) {
-	h.logger = lg
-}
-
-func (h *DownloadHandler) loggerOrDefault() *slog.Logger {
-	if h.logger != nil {
-		return h.logger
-	}
-	return slog.Default()
-}
-
 // Download handles GET /api/v1/download
 func (h *DownloadHandler) Download(c *gin.Context) {
-	if h.DirectFile(c) {
-		return
-	}
 	slug := c.Query("slug")
 	if slug == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "slug is required"})
 		return
 	}
 
-	ref := model.SkillRef{Namespace: c.Query("namespace"), Slug: slug}
 	version := c.DefaultQuery("version", "latest")
-	viewer := middleware.GetUser(c)
-
-	// Fast path: if client sent If-None-Match and fingerprint matches current version,
-	// return 304 without recording a download or building the zip.
-	if inm := c.GetHeader("If-None-Match"); inm != "" {
-		_, ver, err := h.svc.ResolveVersion(c.Request.Context(), ref, version, viewer)
-		if err == nil && ver != nil && matchesETag(inm, ver.Fingerprint) {
-			c.Header("ETag", quoteETag(ver.Fingerprint))
-			c.Status(http.StatusNotModified)
-			return
-		}
-	}
 
 	// Create identity hash from IP for dedup
 	hash := sha256.Sum256([]byte(c.ClientIP()))
 	identityHash := hex.EncodeToString(hash[:])
 
-	result, err := h.svc.Download(c.Request.Context(), ref, version, identityHash, viewer)
+	archive, filename, err := h.svc.Download(c.Request.Context(), slug, version, identityHash)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
-	defer result.Archive.Close()
+	defer archive.Close()
 
-	c.Header("ETag", quoteETag(result.Fingerprint))
-	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": result.Filename}))
+	c.Header("Content-Disposition", "attachment; filename="+filename)
 	c.Header("Content-Type", "application/zip")
-	c.Header("X-Skill-Version", result.Version)
-	c.Header("X-Skill-Fingerprint", result.Fingerprint)
 
-	if _, err := io.Copy(c.Writer, result.Archive); err != nil {
-		h.loggerOrDefault().Error("download stream error", "slug", slug, "err", err)
-	}
-}
-
-// DirectFile handles GET /api/v1/download?direct=1&path=...
-func (h *DownloadHandler) DirectFile(c *gin.Context) bool {
-	if c.Query("direct") != "1" && c.Query("direct") != "true" {
-		return false
-	}
-	filePath := c.Query("path")
-	if filePath == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "path is required for direct download"})
-		return true
-	}
-	slug := c.Query("slug")
-	if slug == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "slug is required"})
-		return true
-	}
-	ref := model.SkillRef{Namespace: c.Query("namespace"), Slug: slug}
-	version := c.DefaultQuery("version", "latest")
-	viewer := middleware.GetUser(c)
-	obj, ver, err := h.svc.DirectDownloadFile(c.Request.Context(), ref, version, filePath, viewer)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		return true
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"provider":    obj.Provider,
-		"bucket":      obj.Bucket,
-		"key":         obj.Key,
-		"method":      obj.Method,
-		"url":         obj.URL,
-		"headers":     obj.Headers,
-		"expiresAt":   obj.ExpiresAt,
-		"version":     ver.Version,
-		"fingerprint": ver.Fingerprint,
-	})
-	return true
-}
-
-// quoteETag wraps a fingerprint in quotes per RFC 7232.
-func quoteETag(fp string) string { return "\"" + fp + "\"" }
-
-// matchesETag reports whether an If-None-Match header value covers the given fingerprint.
-// Handles comma-separated tags, optional weak prefix, and wildcard "*".
-func matchesETag(header, fingerprint string) bool {
-	for _, tag := range strings.Split(header, ",") {
-		tag = strings.TrimSpace(tag)
-		if tag == "" {
-			continue
-		}
-		if tag == "*" {
-			return true
-		}
-		tag = strings.TrimPrefix(tag, "W/")
-		tag = strings.Trim(tag, "\"")
-		if tag == fingerprint {
-			return true
-		}
-	}
-	return false
+	io.Copy(c.Writer, archive)
 }
 
 // Resolve handles GET /api/v1/resolve
@@ -154,7 +55,7 @@ func (h *DownloadHandler) Resolve(c *gin.Context) {
 
 	version, skill, err := h.svc.ResolveFingerprint(c.Request.Context(), fingerprint)
 	if err != nil {
-		writeInternalError(c, "resolve_fingerprint", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if version == nil {
