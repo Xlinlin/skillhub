@@ -15,10 +15,10 @@ export default function SkillDetail() {
   useEffect(() => {
     if (!slug) return;
     getSkill(slug)
-      .then(r => setSkill(r.skill))
+      .then(r => setSkill(r))
       .catch(() => setNotFound(true));
     getVersions(slug)
-      .then(r => setVersions(r.versions || []))
+      .then(r => setVersions(r.data || []))
       .catch(e => console.error('Failed to load skill data:', e));
     // Load SKILL.md content
     getFile(slug, 'latest', 'SKILL.md')

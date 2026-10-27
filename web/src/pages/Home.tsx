@@ -10,7 +10,7 @@ export default function Home() {
   const [skills, setSkills] = useState<Skill[]>([]);
 
   useEffect(() => {
-    listSkills(6, '', 'downloads').then(r => setSkills(r.skills || [])).catch(e => console.error('Failed to load skills:', e));
+    listSkills(6, '', 'downloads').then(r => setSkills(r.data || [])).catch(e => console.error('Failed to load skills:', e));
   }, []);
 
   return (

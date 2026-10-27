@@ -284,6 +284,9 @@ func (g *GitStore) GetFile(owner, slug, version, path string) ([]byte, error) {
 
 	file, err := tree.File(path)
 	if err != nil {
+		if path == "SKILL.md" && err == object.ErrFileNotFound {
+			return readArchivedSkillMarkdown(tree)
+		}
 		return nil, fmt.Errorf("file not found: %s: %w", path, err)
 	}
 

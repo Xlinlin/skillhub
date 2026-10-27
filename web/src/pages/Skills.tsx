@@ -24,7 +24,7 @@ export default function Skills() {
   useEffect(() => {
     setLoading(true);
     listSkills(20, '', sort)
-      .then(r => { setSkills(r.skills || []); setNextCursor(r.nextCursor || ''); })
+      .then(r => { setSkills(r.data || []); setNextCursor(r.nextCursor || ''); })
       .catch(e => console.error('Failed to load skills:', e))
       .finally(() => setLoading(false));
   }, [sort]);
@@ -33,7 +33,7 @@ export default function Skills() {
     if (!nextCursor) return;
     setLoading(true);
     listSkills(20, nextCursor, sort)
-      .then(r => { setSkills(prev => [...prev, ...(r.skills || [])]); setNextCursor(r.nextCursor || ''); })
+      .then(r => { setSkills(prev => [...prev, ...(r.data || [])]); setNextCursor(r.nextCursor || ''); })
       .catch(e => console.error('Failed to load more skills:', e))
       .finally(() => setLoading(false));
   };
