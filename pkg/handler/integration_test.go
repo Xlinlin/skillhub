@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/saker-ai/skillhub/pkg/config"
-	"github.com/saker-ai/skillhub/pkg/model"
-	"github.com/saker-ai/skillhub/pkg/search"
+	"github.com/cinience/skillhub/pkg/config"
+	"github.com/cinience/skillhub/pkg/model"
+	"github.com/cinience/skillhub/pkg/search"
 )
 
 // Integration tests: wire up a full gin router and test complete HTTP flows.
@@ -249,7 +249,7 @@ func TestIntegration_SkillDetailError(t *testing.T) {
 
 func TestIntegration_SearchWithResults(t *testing.T) {
 	searchSvc := &mockSearchService{
-		searchFn: func(_ context.Context, query string, _, _ int, _ []string, _ []search.Filter) (*search.SearchResult, error) {
+		searchFn: func(_ context.Context, query string, _, _ int, _ []string, _ string) (*search.SearchResult, error) {
 			return &search.SearchResult{
 				Hits: []map[string]interface{}{
 					{"slug": "found-skill", "displayName": "Found Skill"},
@@ -292,7 +292,7 @@ func TestIntegration_SearchNoQuery(t *testing.T) {
 
 func TestIntegration_SearchError(t *testing.T) {
 	searchSvc := &mockSearchService{
-		searchFn: func(_ context.Context, _ string, _, _ int, _ []string, _ []search.Filter) (*search.SearchResult, error) {
+		searchFn: func(_ context.Context, _ string, _, _ int, _ []string, _ string) (*search.SearchResult, error) {
 			return nil, fmt.Errorf("meilisearch down")
 		},
 	}

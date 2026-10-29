@@ -7,6 +7,7 @@ services:
       - "10070:10070"
     volumes:
       - skill-repos:/app/data/repos
+      - agent-packages:/app/data/agents
     depends_on:
       postgres:
         condition: service_healthy
@@ -15,6 +16,7 @@ services:
       SKILLHUB_DB_DRIVER: postgres
       SKILLHUB_DATABASE_URL: postgres://skillhub:skillhub@postgres:5432/skillhub?sslmode=disable
       SKILLHUB_GIT_PATH: /app/data/repos
+      SKILLHUB_AGENT_PATH: /app/data/agents
       SKILLHUB_BASE_URL: http://localhost:10070
       SKILLHUB_CONFIG: /app/configs/skillhub.yaml
       SKILLHUB_ADMIN_USER: ${SKILLHUB_ADMIN_USER:-admin}
@@ -44,4 +46,5 @@ services:
 
 volumes:
   skill-repos:
+  agent-packages:
   pg-data:

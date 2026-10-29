@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/saker-ai/skillhub/pkg/model"
+	"github.com/cinience/skillhub/pkg/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

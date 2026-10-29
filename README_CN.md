@@ -1,9 +1,9 @@
 # SkillHub
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/saker-ai/skillhub)](https://goreportcard.com/report/github.com/saker-ai/skillhub)
+[![Go Report Card](https://goreportcard.com/badge/github.com/cinience/skillhub)](https://goreportcard.com/report/github.com/cinience/skillhub)
 
-自托管的 Agent 技能与插件注册中心，用于发布、版本管理与分发 agent 技能和插件 bundle。支持 Web UI、REST API 和 CLI 客户端，兼容 [ClawHub](https://github.com/openclaw/clawhub) 协议。适合企业内部构建自己的 agent 技能和插件注册中心。
+自托管的 Agent 技能注册中心，用于发布、版本管理与分发 agent 技能。支持 Web UI、REST API 和 CLI 客户端，兼容 [ClawHub](https://github.com/openclaw/clawhub) 协议。适合企业内部构建自己的 agent 技能注册中心。
 
 [English](README.md) | [中文](README_CN.md)
 
@@ -25,7 +25,7 @@
 前置条件：Go 1.25+、Node.js 22+
 
 ```bash
-git clone https://github.com/saker-ai/skillhub.git
+git clone https://github.com/cinience/skillhub.git
 cd skillhub
 make quickstart ADMIN_USER=admin ADMIN_PASSWORD=admin123
 ```
@@ -37,7 +37,7 @@ make quickstart ADMIN_USER=admin ADMIN_PASSWORD=admin123
 ### Docker Compose（生产部署）
 
 ```bash
-git clone https://github.com/saker-ai/skillhub.git
+git clone https://github.com/cinience/skillhub.git
 cd skillhub
 SKILLHUB_ADMIN_PASSWORD=secret make docker-up
 ```
@@ -101,104 +101,6 @@ skillhub admin set-password --user alice --password newpass
 
 技能默认安装到 `~/.skillhub/skills/`，可通过 `~/.skillhub/config.yaml` 中的 `skills_dir` 自定义。
 
-## 插件 (Plugins)
-
-Plugin 按 [Agent Plugins Specification 1.0.0](https://github.com/agentplugins/agent-plugins-spec) 将 Agent Skills 与 MCP servers 打包为单一可部署目录。SkillHub 负责不可变版本发布和分发。
-
-### 插件清单 (`plugin.json`)
-
-```json
-{
-	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "my-plugin",
-  "version": "1.0.0",
-	"description": "生产力工具插件包"
-}
-```
-
-组件使用固定位置：Skills 位于 `skills/<name>/SKILL.md`，MCP servers 位于根目录 `mcp.json`：
-
-```json
-{
-	"$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-	"mcpServers": {
-    "code-tools": {
-			"type": "streamable-http",
-			"url": "https://tools.example.com/mcp"
-    }
-  }
-}
-```
-
-### 发布插件
-
-```bash
-skillhub plugin publish ./my-plugin \
-  --slug my-plugin --version 1.0.0 \
-  --summary "生产力工具包"
-```
-
-### 插件 API
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `POST` | `/api/v1/plugins` | 发布插件（multipart: plugin.json + 文件） |
-| `GET` | `/api/v1/plugins` | 列出所有插件 |
-| `GET` | `/api/v1/plugins/:slug` | 获取插件元信息 |
-| `GET` | `/api/v1/plugins/:slug/versions` | 列出插件版本 |
-| `GET` | `/api/v1/plugins/file?slug=X&version=Y&path=Z` | 获取插件中的文件 |
-| `GET` | `/api/v1/plugins/download?slug=X&version=Y` | 下载插件包 |
-| `DELETE` | `/api/v1/plugins/:slug` | 软删除插件（所有者） |
-| `POST` | `/api/v1/plugins/:slug/undelete` | 恢复已删除插件 |
-| `POST` | `/api/v1/plugins/:slug/versions/:version/yank` | 撤回版本 |
-| `DELETE` | `/api/v1/plugins/:slug/versions/:version/yank` | 取消撤回版本 |
-
-### 在 Saker 中加载插件
-
-**全局加载（运行时启动时）：**
-```go
-api.Options{
-    RemotePluginSources: []plugin.RemotePluginSource{{
-        Registry: "http://skillhub:10070",
-        Slugs:    []string{"my-plugin"},
-    }},
-}
-```
-
-**Session 级别加载（通过 API 按请求）：**
-```json
-{
-  "extra_body": {
-    "plugin_uri": "plugin://skillhub:10070?slugs=my-plugin"
-  }
-}
-```
-
-加载后插件的组件被分解注入：
-- **Skills** → 注册到 session skill 注册表
-- **MCP Servers** → 建立连接并注册为可用工具
-- **Hooks** → 在 run 生命周期内与全局 hooks 并行执行
-
-Session 加载的插件按 thread 缓存（TTL 10 分钟），支持跨 turn 复用。
-
-## 测试与 Saker 联动
-
-在干净检出中运行后端测试：
-
-```bash
-make test
-```
-
-`make test` 会先准备轻量的 `web/static/` embed 目录，再执行 Go 测试；因此即使尚未构建前端也可以运行。需要把真实 Vite 产物嵌入二进制时，使用 `make frontend` 或 `make build`。
-
-如需验证 Saker 与当前 SkillHub 协议面的联动，在 Saker 仓库运行：
-
-```bash
-go test ./pkg/skillhub ./pkg/plugin ./pkg/server/agui ./pkg/server/openai ./pkg/runtime/subagents
-```
-
-这组定向测试覆盖 SkillHub client、远程 plugin loader、`skillhub_uri` / `plugin_uri` 解析、AG-UI 与 OpenAI 的 session 级加载、domain-token 注入、thread 级缓存，以及 subagent worktree 处理。
-
 ## 架构
 
 ```mermaid
@@ -232,14 +134,14 @@ graph LR
 skillhub/
 ├── cmd/skillhub/           # 入口 — 服务端 + CLI 路由
 │   └── main.go
-├── pkg/
+├── internal/
 │   ├── auth/                # bcrypt 密码、HMAC API Token、会话管理
 │   ├── cli/                 # CLI 客户端（配置、HTTP 客户端、命令、输出格式化）
 │   ├── config/              # YAML 配置 + 环境变量覆盖
 │   ├── gitstore/            # 裸 Git 仓库存储、镜像推送、Webhook 导入
 │   ├── handler/             # HTTP 处理器（技能、认证、搜索、管理、Web UI）
 │   ├── middleware/          # 认证、限流、请求 ID、日志
-│   ├── model/               # 领域模型（User、Skill、Version、Token、Star、Plugin）
+│   ├── model/               # 领域模型（User、Skill、Version、Token、Star）
 │   ├── repository/          # 数据库访问层（GORM）
 │   ├── search/              # Bleve 全文搜索集成
 │   ├── server/              # 服务启动、路由注册、自动初始化
@@ -295,11 +197,6 @@ skills_dir: ~/.skillhub/skills   # 技能安装目录（可选）
 | `GET` | `/api/v1/skills/:slug/versions` | 版本列表 |
 | `GET` | `/api/v1/skills/:slug/versions/:version` | 获取特定版本 |
 | `GET` | `/api/v1/skills/:slug/file` | 获取技能文件内容 |
-| `GET` | `/api/v1/plugins` | 插件列表 |
-| `GET` | `/api/v1/plugins/:slug` | 插件详情 |
-| `GET` | `/api/v1/plugins/:slug/versions` | 插件版本列表 |
-| `GET` | `/api/v1/plugins/file?slug=X&version=Y&path=Z` | 获取插件文件内容 |
-| `GET` | `/api/v1/plugins/download?slug=X&version=Y` | 下载插件包 |
 | `GET` | `/api/v1/search?q=...` | 全文搜索 |
 | `GET` | `/api/v1/download?slug=...&version=...` | 下载技能 ZIP |
 | `GET` | `/api/v1/resolve` | 解析技能版本 |
@@ -312,14 +209,9 @@ skills_dir: ~/.skillhub/skills   # 技能安装目录（可选）
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/api/v1/whoami` | 当前用户信息 |
-| `POST` | `/api/agent/skills` | 发布技能 |
+| `POST` | `/api/v1/skills` | 发布技能 |
 | `DELETE` | `/api/v1/skills/:slug` | 软删除技能 |
 | `POST` | `/api/v1/skills/:slug/undelete` | 恢复已删除技能 |
-| `POST` | `/api/v1/plugins` | 发布插件 |
-| `DELETE` | `/api/v1/plugins/:slug` | 软删除插件 |
-| `POST` | `/api/v1/plugins/:slug/undelete` | 恢复已删除插件 |
-| `POST` | `/api/v1/plugins/:slug/versions/:version/yank` | 撤回插件版本 |
-| `DELETE` | `/api/v1/plugins/:slug/versions/:version/yank` | 取消撤回插件版本 |
 | `POST` | `/api/v1/stars/:slug` | 收藏技能 |
 | `DELETE` | `/api/v1/stars/:slug` | 取消收藏 |
 
@@ -327,18 +219,11 @@ skills_dir: ~/.skillhub/skills   # 技能安装目录（可选）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/api/v1/admin/users` | 用户列表 |
-| `POST` | `/api/v1/admin/users` | 创建用户 |
-| `POST` | `/api/v1/admin/tokens` | 创建 API Token |
-| `POST` | `/api/v1/admin/users/ban` | 封禁/解封用户 |
-| `POST` | `/api/v1/admin/users/role` | 设置用户角色 |
-| `GET` | `/api/v1/admin/skills` | 所有技能列表（任意可见性） |
-| `POST` | `/api/v1/admin/skills/:slug/review` | 审核技能（批准/拒绝） |
-| `POST` | `/api/v1/admin/skills/:slug/visibility` | 设置技能可见性 |
-| `GET` | `/api/v1/admin/plugins` | 所有插件列表（任意可见性） |
-| `POST` | `/api/v1/admin/plugins/:slug/review` | 审核插件（批准/拒绝） |
-| `POST` | `/api/v1/admin/plugins/:slug/visibility` | 设置插件可见性 |
-| `GET` | `/api/v1/admin/audit-logs` | 审计日志列表 |
+| `GET` | `/api/v1/users` | 用户列表 |
+| `POST` | `/api/v1/users` | 创建用户 |
+| `POST` | `/api/v1/tokens` | 创建 API Token |
+| `POST` | `/api/v1/users/ban` | 封禁/解封用户 |
+| `POST` | `/api/v1/users/role` | 设置用户角色 |
 
 ### Webhook 接口
 

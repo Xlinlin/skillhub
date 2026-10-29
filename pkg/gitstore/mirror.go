@@ -5,43 +5,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"time"
-
-	"github.com/saker-ai/skillhub/pkg/config"
+	"github.com/cinience/skillhub/pkg/config"
 )
-
-var mirrorHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 type MirrorService struct {
 	gitStore *GitStore
 	cfg      config.MirrorConfig
 	token    string
-	logger   *slog.Logger
 }
 
 func NewMirrorService(gs *GitStore, cfg config.MirrorConfig) *MirrorService {
 	token := os.Getenv(cfg.TokenEnv)
 	return &MirrorService{gitStore: gs, cfg: cfg, token: token}
-}
-
-// SetLogger 注入 *slog.Logger。nil 等价于走 slog.Default()。
-// PushAll 在装配后才会被调用,因此 setter 在 server.go 装配阶段调用即可。
-func (m *MirrorService) SetLogger(lg *slog.Logger) {
-	m.logger = lg
-}
-
-func (m *MirrorService) loggerOrDefault() *slog.Logger {
-	if m.logger != nil {
-		return m.logger
-	}
-	return slog.Default()
 }
 
 func (m *MirrorService) Enabled() bool {
@@ -103,7 +85,7 @@ func (m *MirrorService) PushAll(ctx context.Context) error {
 			}
 			slug := strings.TrimSuffix(repoDir.Name(), ".git")
 			if err := m.PushMirror(ctx, ownerDir.Name(), slug); err != nil {
-				m.loggerOrDefault().Warn("mirror push failed", "owner", ownerDir.Name(), "slug", slug, "err", err)
+				log.Printf("mirror push failed for %s/%s: %v", ownerDir.Name(), slug, err)
 			}
 		}
 	}
@@ -154,7 +136,7 @@ func (m *MirrorService) ensureGitHubRepo(ctx context.Context, repoName, baseURL 
 	req.Header.Set("Authorization", "Bearer "+m.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := mirrorHTTPClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -179,7 +161,7 @@ func (m *MirrorService) ensureGitLabRepo(ctx context.Context, repoName, baseURL 
 	req.Header.Set("PRIVATE-TOKEN", m.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := mirrorHTTPClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -201,7 +183,7 @@ func (m *MirrorService) ensureGiteaRepo(ctx context.Context, repoName, baseURL s
 	req.Header.Set("Authorization", "token "+m.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := mirrorHTTPClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}

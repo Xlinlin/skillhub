@@ -11,9 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/saker-ai/skillhub/pkg/config"
-	"github.com/saker-ai/skillhub/pkg/model"
-	"github.com/saker-ai/skillhub/pkg/search"
+	"github.com/cinience/skillhub/pkg/config"
+	"github.com/cinience/skillhub/pkg/model"
+	"github.com/cinience/skillhub/pkg/search"
 )
 
 func init() {
@@ -23,53 +23,53 @@ func init() {
 // --- Mock implementations ---
 
 type mockSkillService struct {
-	listSkillsFn  func(ctx context.Context, limit int, cursor, sort string) ([]model.SkillWithOwner, string, error)
-	getSkillFn    func(ctx context.Context, slug string) (*model.SkillWithOwner, error)
-	getVersionsFn func(ctx context.Context, slug string) ([]model.SkillVersion, error)
-	getFileFn     func(ctx context.Context, slug, version, path string) ([]byte, error)
-	getVersionFn  func(ctx context.Context, slug, version string) (*model.SkillVersion, error)
+	listSkillsFn   func(ctx context.Context, limit int, cursor, sort string) ([]model.SkillWithOwner, string, error)
+	getSkillFn     func(ctx context.Context, slug string) (*model.SkillWithOwner, error)
+	getVersionsFn  func(ctx context.Context, slug string) ([]model.SkillVersion, error)
+	getFileFn      func(ctx context.Context, slug, version, path string) ([]byte, error)
+	getVersionFn   func(ctx context.Context, slug, version string) (*model.SkillVersion, error)
 }
 
-func (m *mockSkillService) ListSkills(ctx context.Context, limit int, cursor, sort, category, namespaceSlug string, _ *model.User) ([]model.SkillWithOwner, string, error) {
+func (m *mockSkillService) ListSkills(ctx context.Context, limit int, cursor, sort string) ([]model.SkillWithOwner, string, error) {
 	if m.listSkillsFn != nil {
 		return m.listSkillsFn(ctx, limit, cursor, sort)
 	}
 	return nil, "", nil
 }
 
-func (m *mockSkillService) GetSkill(ctx context.Context, ref model.SkillRef, _ *model.User) (*model.SkillWithOwner, error) {
+func (m *mockSkillService) GetSkill(ctx context.Context, slug string) (*model.SkillWithOwner, error) {
 	if m.getSkillFn != nil {
-		return m.getSkillFn(ctx, ref.Slug)
+		return m.getSkillFn(ctx, slug)
 	}
 	return nil, nil
 }
 
-func (m *mockSkillService) GetVersions(ctx context.Context, ref model.SkillRef, _ *model.User) ([]model.SkillVersion, error) {
+func (m *mockSkillService) GetVersions(ctx context.Context, slug string) ([]model.SkillVersion, error) {
 	if m.getVersionsFn != nil {
-		return m.getVersionsFn(ctx, ref.Slug)
+		return m.getVersionsFn(ctx, slug)
 	}
 	return nil, nil
 }
 
-func (m *mockSkillService) GetFile(ctx context.Context, ref model.SkillRef, version, path string, _ *model.User) ([]byte, error) {
+func (m *mockSkillService) GetFile(ctx context.Context, slug, version, path string) ([]byte, error) {
 	if m.getFileFn != nil {
-		return m.getFileFn(ctx, ref.Slug, version, path)
+		return m.getFileFn(ctx, slug, version, path)
 	}
 	return nil, nil
 }
 
-func (m *mockSkillService) GetVersion(ctx context.Context, ref model.SkillRef, version string, _ *model.User) (*model.SkillVersion, error) {
+func (m *mockSkillService) GetVersion(ctx context.Context, slug, version string) (*model.SkillVersion, error) {
 	if m.getVersionFn != nil {
-		return m.getVersionFn(ctx, ref.Slug, version)
+		return m.getVersionFn(ctx, slug, version)
 	}
 	return nil, nil
 }
 
 type mockSearchService struct {
-	searchFn func(ctx context.Context, query string, limit, offset int, sort []string, filters []search.Filter) (*search.SearchResult, error)
+	searchFn func(ctx context.Context, query string, limit, offset int, sort []string, filters string) (*search.SearchResult, error)
 }
 
-func (m *mockSearchService) Search(ctx context.Context, query string, limit, offset int, sort []string, filters []search.Filter) (*search.SearchResult, error) {
+func (m *mockSearchService) Search(ctx context.Context, query string, limit, offset int, sort []string, filters string) (*search.SearchResult, error) {
 	if m.searchFn != nil {
 		return m.searchFn(ctx, query, limit, offset, sort, filters)
 	}
@@ -77,15 +77,6 @@ func (m *mockSearchService) Search(ctx context.Context, query string, limit, off
 }
 
 // --- Test helpers ---
-
-func hasSearchFilter(filters []search.Filter, field string, value interface{}) bool {
-	for _, filter := range filters {
-		if filter.Field == field && filter.Value == value {
-			return true
-		}
-	}
-	return false
-}
 
 func testSkill() model.SkillWithOwner {
 	name := "Test Skill"
@@ -185,27 +176,6 @@ func TestWebHandler_Index_NoSkills(t *testing.T) {
 	}
 }
 
-func TestTemplateFuncMap_DisplayNameFormatting(t *testing.T) {
-	funcMap := TemplateFuncMap()
-	displayNameText := funcMap["displayNameText"].(func(any, any, int) string)
-	displayNameTooltip := funcMap["displayNameTooltip"].(func(any, any, int) string)
-
-	if got := displayNameText("Twilio", "twilio-api", 48); got != "Twilio" {
-		t.Fatalf("short display name = %q, want %q", got, "Twilio")
-	}
-	if got := displayNameText("   ", "social-content", 48); got != "social-content" {
-		t.Fatalf("fallback display name = %q, want %q", got, "social-content")
-	}
-
-	longDisplayName := "My goal is to support the community and continue creating more useful tools."
-	if got := displayNameText(longDisplayName, "social-content", 50); got != "My goal is to support the community and continue…" {
-		t.Fatalf("truncated display name = %q", got)
-	}
-	if got := displayNameTooltip(longDisplayName, "social-content", 50); got != longDisplayName {
-		t.Fatalf("tooltip = %q, want original", got)
-	}
-}
-
 func TestWebHandler_Skills(t *testing.T) {
 	skills := []model.SkillWithOwner{testSkill()}
 	mock := &mockSkillService{
@@ -302,9 +272,10 @@ func TestWebHandler_SkillDetail(t *testing.T) {
 	if !strings.Contains(body, "test-skill") {
 		t.Error("expected skill slug in body")
 	}
-	// Goldmark 渲染：测试模板不一定包含 markdown 块，仅在出现时校验形态正确。
-	// 不强校验为非空——上面的 DETAIL/slug 检查已经覆盖核心契约。
-	_ = strings.Contains(body, "<h1>Hello</h1>") || strings.Contains(body, "<strong>bold</strong>")
+	// Goldmark should render markdown
+	if !strings.Contains(body, "<h1>Hello</h1>") && !strings.Contains(body, "<strong>bold</strong>") {
+		// Template may or may not include rendered HTML depending on test template
+	}
 }
 
 func TestWebHandler_SkillDetail_NotFound(t *testing.T) {
@@ -329,17 +300,15 @@ func TestWebHandler_SkillDetail_NotFound(t *testing.T) {
 
 func TestWebHandler_Search_WithQuery(t *testing.T) {
 	searchMock := &mockSearchService{
-		searchFn: func(_ context.Context, query string, limit, offset int, _ []string, filters []search.Filter) (*search.SearchResult, error) {
+		searchFn: func(_ context.Context, query string, limit, offset int, _ []string, filters string) (*search.SearchResult, error) {
 			if query != "golang" {
 				t.Errorf("query = %q, want 'golang'", query)
 			}
 			if limit != 20 {
 				t.Errorf("limit = %d, want 20", limit)
 			}
-			if !hasSearchFilter(filters, "visibility", "public") ||
-				!hasSearchFilter(filters, "moderationStatus", "approved") ||
-				!hasSearchFilter(filters, "isDeleted", false) {
-				t.Errorf("filters should include public approved visibility checks: %#v", filters)
+			if !strings.Contains(filters, "moderationStatus = approved") {
+				t.Errorf("filters should include moderation check: %q", filters)
 			}
 			return &search.SearchResult{
 				Hits:             []map[string]interface{}{{"slug": "go-skill"}},

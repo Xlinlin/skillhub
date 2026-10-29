@@ -31,7 +31,7 @@ WORKDIR /app
 COPY --from=builder /skillhub /app/skillhub
 COPY configs/ /app/configs/
 
-RUN mkdir -p /app/data/repos
+RUN mkdir -p /app/data/repos /app/data/agents
 
 EXPOSE 10070
 

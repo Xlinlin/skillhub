@@ -1,9 +1,9 @@
 # SkillHub
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/saker-ai/skillhub)](https://goreportcard.com/report/github.com/saker-ai/skillhub)
+[![Go Report Card](https://goreportcard.com/badge/github.com/cinience/skillhub)](https://goreportcard.com/report/github.com/cinience/skillhub)
 
-Self-hosted agent skill & plugin registry. Publish, version, and distribute agent skills and plugin bundles across your organization — with a Web UI, REST API, and CLI client built on the [ClawHub](https://github.com/openclaw/clawhub) protocol. Ideal for enterprises building their own internal agent skill and plugin registry.
+Self-hosted agent skill registry. Publish, version, and distribute agent skills across your organization — with a Web UI, REST API, and CLI client built on the [ClawHub](https://github.com/openclaw/clawhub) protocol. Ideal for enterprises building their own internal agent skill registry.
 
 [English](README.md) | [中文](README_CN.md)
 
@@ -17,6 +17,7 @@ Self-hosted agent skill & plugin registry. Publish, version, and distribute agen
 - **ClawHub compatible** — Implements the ClawHub registry protocol. Skills published to SkillHub work with any ClawHub-compatible client.
 - **Webhook import** — Push to GitHub/GitLab/Gitea and skills are auto-imported and published.
 - **Auth & RBAC** — bcrypt password authentication, scoped API tokens, role-based access control (admin / moderator / user).
+- **Agent suites** — Publish standalone agents or collaborative project suites from **Agents**. Immutable ZIP versions preserve native files for downloading and running in your own tools. [Agent hosting guide](docs/agent-hosting.md).
 
 ## Quick Start
 
@@ -25,7 +26,7 @@ Self-hosted agent skill & plugin registry. Publish, version, and distribute agen
 Prerequisites: Go 1.25+, Node.js 22+
 
 ```bash
-git clone https://github.com/saker-ai/skillhub.git
+git clone https://github.com/cinience/skillhub.git
 cd skillhub
 make quickstart ADMIN_USER=admin ADMIN_PASSWORD=admin123
 ```
@@ -37,7 +38,7 @@ Open http://localhost:10070.
 ### Docker Compose (Production)
 
 ```bash
-git clone https://github.com/saker-ai/skillhub.git
+git clone https://github.com/cinience/skillhub.git
 cd skillhub
 SKILLHUB_ADMIN_PASSWORD=secret make docker-up
 ```
@@ -93,6 +94,10 @@ skillhub publish ./my-skill \
   --tags "coding,automation" \
   --summary "A useful coding skill"
 
+# Publish an Agent suite (directory or original ZIP; updated CLI required)
+skillhub publish ./my-agent-suite --type agent --kind suite --slug my-agent-suite --name "My Agent Suite" --version 1.0.0
+# Optional: --instructions-file ./USAGE.md --tags "product,design" --changelog "First release"
+
 # Admin
 skillhub admin create-user --handle alice --role admin --password secret
 skillhub admin create-token --user alice --label "CI"
@@ -101,124 +106,7 @@ skillhub admin set-password --user alice --password newpass
 
 Skills are installed to `~/.skillhub/skills/` by default. Customize via `skills_dir` in `~/.skillhub/config.yaml`.
 
-## Plugins
-
-Plugins follow [Agent Plugins Specification 1.0.0](https://github.com/agentplugins/agent-plugins-spec) and package Agent Skills plus MCP servers into a directory. SkillHub publishes and distributes immutable plugin versions.
-
-### Plugin Manifest (`plugin.json`)
-
-```json
-{
-	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "my-plugin",
-  "version": "1.0.0",
-	"description": "A productivity plugin bundle"
-}
-```
-
-Components use fixed locations: Skills under `skills/<name>/SKILL.md` and MCP servers in root `mcp.json`:
-
-```json
-{
-	"$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-	"mcpServers": {
-    "code-tools": {
-			"type": "streamable-http",
-			"url": "https://tools.example.com/mcp"
-    }
-  }
-}
-```
-
-### Publishing a Plugin
-
-```bash
-skillhub plugin publish ./my-plugin \
-  --slug my-plugin --version 1.0.0 \
-  --summary "Productivity tools bundle"
-```
-
-The CLI accepts Agent Plugins directories rooted at `plugin.json`. Install downloaded
-plugins into `~/plugins` by default, or set `plugins_dir` in `~/.skillhub/config.yaml`.
-
-```bash
-skillhub plugin list
-skillhub plugin inspect my-plugin
-skillhub plugin install my-plugin --version latest
-skillhub plugin update --all
-skillhub plugin delete my-plugin
-skillhub plugin undelete my-plugin
-skillhub plugin yank my-plugin 1.0.0 --reason "broken release"
-skillhub plugin unyank my-plugin 1.0.0
-```
-
-Namespace-qualified plugin refs use the same `@namespace/slug` shape as skills:
-
-```bash
-skillhub plugin publish ./my-plugin --namespace acme
-skillhub plugin install @acme/my-plugin
-```
-
-### Plugin API
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/v1/plugins` | Publish plugin (multipart: plugin.json + files) |
-| `GET` | `/api/v1/plugins` | List plugins |
-| `GET` | `/api/v1/plugins/:slug` | Get plugin metadata |
-| `GET` | `/api/v1/plugins/:slug/versions` | List plugin versions |
-| `GET` | `/api/v1/plugins/file?slug=X&version=Y&path=Z` | Get file from plugin |
-| `GET` | `/api/v1/plugins/download?slug=X&version=Y` | Download plugin package |
-| `DELETE` | `/api/v1/plugins/:slug` | Soft-delete a plugin (owner) |
-| `POST` | `/api/v1/plugins/:slug/undelete` | Restore a deleted plugin |
-| `POST` | `/api/v1/plugins/:slug/versions/:version/yank` | Yank a version |
-| `DELETE` | `/api/v1/plugins/:slug/versions/:version/yank` | Unyank a version |
-
-### Loading Plugins in Saker
-
-**Global (runtime startup):**
-```go
-api.Options{
-    RemotePluginSources: []plugin.RemotePluginSource{{
-        Registry: "http://skillhub:10070",
-        Slugs:    []string{"my-plugin"},
-    }},
-}
-```
-
-**Session-level (per-request via API):**
-```json
-{
-  "extra_body": {
-    "plugin_uri": "plugin://skillhub:10070?slugs=my-plugin"
-  }
-}
-```
-
-When loaded, a plugin's components are decomposed and injected:
-- **Skills** → registered in the session skill registry
-- **MCP Servers** → connections established and tools registered
-- **Hooks** → executed alongside global hooks for the run's lifetime
-
-Session-loaded plugins are cached per-thread (TTL 10min) for cross-turn reuse.
-
-## Testing and Saker Integration
-
-Run the backend test suite from a clean checkout with:
-
-```bash
-make test
-```
-
-`make test` prepares a lightweight `web/static/` embed directory before invoking Go tests, so it works even before the frontend has been built. Use `make frontend` or `make build` when you need the real Vite assets embedded in the binary.
-
-To validate the Saker integration against the current SkillHub protocol surface, run these in the Saker repository:
-
-```bash
-go test ./pkg/skillhub ./pkg/plugin ./pkg/server/agui ./pkg/server/openai ./pkg/runtime/subagents
-```
-
-That targeted suite covers the SkillHub client, remote plugin loader, `skillhub_uri` / `plugin_uri` parsing, AG-UI and OpenAI per-session loading, domain-token handling, thread-level caches, and subagent worktree handling.
+Agent publishing reuses `skillhub login` and the same API Token. Without `--type`, publishing defaults to Skill. See **Publish → Agent → CLI / API** or the [Agent hosting guide](docs/agent-hosting.md) for directory/ZIP and multipart examples.
 
 ## Architecture
 
@@ -253,14 +141,14 @@ graph LR
 skillhub/
 ├── cmd/skillhub/           # Entry point — server + CLI routing
 │   └── main.go
-├── pkg/
+├── internal/
 │   ├── auth/                # bcrypt passwords, HMAC API tokens, sessions
 │   ├── cli/                 # CLI client (config, HTTP client, commands, output)
 │   ├── config/              # YAML config + environment variable overrides
 │   ├── gitstore/            # Bare Git repo storage, mirror push, webhook import
 │   ├── handler/             # HTTP handlers (skill, auth, search, admin, web UI)
 │   ├── middleware/          # Auth, rate limiting, request ID, logging
-│   ├── model/               # Domain models (User, Skill, Version, Token, Star, Plugin)
+│   ├── model/               # Domain models (User, Skill, Version, Token, Star)
 │   ├── repository/          # Database repositories (GORM)
 │   ├── search/              # Bleve full-text search integration
 │   ├── server/              # Server bootstrap, routing, auto-setup
@@ -316,11 +204,6 @@ skills_dir: ~/.skillhub/skills   # Skill install directory (optional)
 | `GET` | `/api/v1/skills/:slug/versions` | List versions |
 | `GET` | `/api/v1/skills/:slug/versions/:version` | Get specific version |
 | `GET` | `/api/v1/skills/:slug/file` | Get skill file content |
-| `GET` | `/api/v1/plugins` | List plugins |
-| `GET` | `/api/v1/plugins/:slug` | Get plugin metadata |
-| `GET` | `/api/v1/plugins/:slug/versions` | List plugin versions |
-| `GET` | `/api/v1/plugins/file?slug=X&version=Y&path=Z` | Get plugin file content |
-| `GET` | `/api/v1/plugins/download?slug=X&version=Y` | Download plugin package |
 | `GET` | `/api/v1/search?q=...` | Full-text search |
 | `GET` | `/api/v1/download?slug=...&version=...` | Download skill ZIP |
 | `GET` | `/api/v1/resolve` | Resolve skill version |
@@ -333,14 +216,9 @@ skills_dir: ~/.skillhub/skills   # Skill install directory (optional)
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/v1/whoami` | Current user info |
-| `POST` | `/api/agent/skills` | Publish a skill |
+| `POST` | `/api/v1/skills` | Publish a skill |
 | `DELETE` | `/api/v1/skills/:slug` | Soft-delete a skill |
 | `POST` | `/api/v1/skills/:slug/undelete` | Restore a deleted skill |
-| `POST` | `/api/v1/plugins` | Publish a plugin |
-| `DELETE` | `/api/v1/plugins/:slug` | Soft-delete a plugin |
-| `POST` | `/api/v1/plugins/:slug/undelete` | Restore a deleted plugin |
-| `POST` | `/api/v1/plugins/:slug/versions/:version/yank` | Yank a plugin version |
-| `DELETE` | `/api/v1/plugins/:slug/versions/:version/yank` | Unyank a plugin version |
 | `POST` | `/api/v1/stars/:slug` | Star a skill |
 | `DELETE` | `/api/v1/stars/:slug` | Unstar a skill |
 
@@ -348,18 +226,11 @@ skills_dir: ~/.skillhub/skills   # Skill install directory (optional)
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/v1/admin/users` | List users |
-| `POST` | `/api/v1/admin/users` | Create user |
-| `POST` | `/api/v1/admin/tokens` | Create API token |
-| `POST` | `/api/v1/admin/users/ban` | Ban/unban user |
-| `POST` | `/api/v1/admin/users/role` | Set user role |
-| `GET` | `/api/v1/admin/skills` | List all skills (any visibility) |
-| `POST` | `/api/v1/admin/skills/:slug/review` | Approve/reject skill |
-| `POST` | `/api/v1/admin/skills/:slug/visibility` | Set skill visibility |
-| `GET` | `/api/v1/admin/plugins` | List all plugins (any visibility) |
-| `POST` | `/api/v1/admin/plugins/:slug/review` | Approve/reject plugin |
-| `POST` | `/api/v1/admin/plugins/:slug/visibility` | Set plugin visibility |
-| `GET` | `/api/v1/admin/audit-logs` | List audit log entries |
+| `GET` | `/api/v1/users` | List users |
+| `POST` | `/api/v1/users` | Create user |
+| `POST` | `/api/v1/tokens` | Create API token |
+| `POST` | `/api/v1/users/ban` | Ban/unban user |
+| `POST` | `/api/v1/users/role` | Set user role |
 
 ### Webhooks
 

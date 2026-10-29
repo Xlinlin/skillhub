@@ -10,7 +10,10 @@ import (
 	"github.com/blevesearch/bleve/v2/mapping"
 	bleveSearch "github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/searcher"
-	"github.com/saker-ai/skillhub/pkg/config"
+	"github.com/cinience/skillhub/pkg/config"
+
+	// Ensure searcher init runs (needed for DisjunctionMaxClauseCount).
+	_ "github.com/blevesearch/bleve/v2/search/searcher"
 )
 
 // Suppress unused import warning.
@@ -33,14 +36,6 @@ func New(cfg config.SearchConfig) (*Client, error) {
 		idx, err = bleve.New(indexPath, buildMapping())
 	} else {
 		idx, err = bleve.Open(indexPath)
-		if err == nil {
-			// Existing indexes created before namespace support lack the
-			// namespaceSlug field mapping. Namespace-filtered searches will
-			// silently return no results. Operators should delete the index
-			// directory and restart to rebuild with namespace support.
-			fmt.Fprintf(os.Stderr, "NOTE: if namespace search filtering returns no results, "+
-				"delete %s and restart to rebuild the index.\n", indexPath)
-		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("open bleve index: %w", err)
@@ -66,12 +61,8 @@ func buildMapping() mapping.IndexMapping {
 	skillMapping.AddFieldMappingsAt("ownerHandle", textField)
 
 	// Filterable keyword fields
-	skillMapping.AddFieldMappingsAt("category", keywordField)
-	skillMapping.AddFieldMappingsAt("docType", keywordField)
-	skillMapping.AddFieldMappingsAt("visibility", keywordField)
 	skillMapping.AddFieldMappingsAt("moderationStatus", keywordField)
 	skillMapping.AddFieldMappingsAt("ownerHandleExact", keywordField)
-	skillMapping.AddFieldMappingsAt("namespaceSlug", keywordField)
 
 	// Boolean filter fields
 	skillMapping.AddFieldMappingsAt("isSuspicious", boolField)
@@ -94,12 +85,9 @@ type SkillDocument struct {
 	DisplayName      string   `json:"displayName"`
 	Summary          string   `json:"summary"`
 	SkillMdContent   string   `json:"skillMdContent"`
-	Category         string   `json:"category"`
 	Tags             []string `json:"tags"`
 	OwnerHandle      string   `json:"ownerHandle"`
 	OwnerHandleExact string   `json:"ownerHandleExact"`
-	NamespaceSlug    string   `json:"namespaceSlug"`
-	Visibility       string   `json:"visibility"`
 	ModerationStatus string   `json:"moderationStatus"`
 	IsSuspicious     bool     `json:"isSuspicious"`
 	IsDeleted        bool     `json:"isDeleted"`
@@ -120,38 +108,6 @@ func (c *Client) DeleteSkill(ctx context.Context, id string) error {
 	return c.index.Delete(id)
 }
 
-type PluginDocument struct {
-	ID               string   `json:"id"`
-	Slug             string   `json:"slug"`
-	DisplayName      string   `json:"displayName"`
-	Summary          string   `json:"summary"`
-	DocType          string   `json:"docType"`
-	Category         string   `json:"category"`
-	Tags             []string `json:"tags"`
-	OwnerHandle      string   `json:"ownerHandle"`
-	OwnerHandleExact string   `json:"ownerHandleExact"`
-	NamespaceSlug    string   `json:"namespaceSlug"`
-	Visibility       string   `json:"visibility"`
-	ModerationStatus string   `json:"moderationStatus"`
-	IsDeleted        bool     `json:"isDeleted"`
-	Downloads        int64    `json:"downloads"`
-	Stars            int      `json:"stars"`
-	UpdatedAt        int64    `json:"updatedAt"`
-	CreatedAt        int64    `json:"createdAt"`
-}
-
-func (c *Client) IndexPlugin(ctx context.Context, doc *PluginDocument) error {
-	doc.OwnerHandleExact = doc.OwnerHandle
-	if doc.DocType == "" {
-		doc.DocType = "plugin"
-	}
-	return c.index.Index("plugin_"+doc.ID, doc)
-}
-
-func (c *Client) DeletePlugin(ctx context.Context, id string) error {
-	return c.index.Delete("plugin_" + id)
-}
-
 type SearchResult struct {
 	Hits             []map[string]interface{} `json:"hits"`
 	Query            string                   `json:"query"`
@@ -159,14 +115,9 @@ type SearchResult struct {
 	EstimatedTotal   int64                    `json:"estimatedTotalHits"`
 }
 
-type Filter struct {
-	Field string
-	Value interface{}
-}
-
 // Search performs a full-text search with optional sorting and filtering.
-func (c *Client) Search(ctx context.Context, query string, limit, offset int, sort []string, filters []Filter) (*SearchResult, error) {
-	q := bleve.NewMatchQuery(query)
+func (c *Client) Search(ctx context.Context, query string, limit, offset int, sort []string, filters string) (*SearchResult, error) {
+	q := bleve.NewQueryStringQuery(query)
 	searchReq := bleve.NewSearchRequestOptions(q, limit, offset, false)
 	searchReq.Fields = []string{"*"}
 
@@ -191,48 +142,38 @@ func (c *Client) Search(ctx context.Context, query string, limit, offset int, so
 		searchReq.SortByCustom(sortOrder)
 	}
 
-	if len(filters) > 0 {
+	// Apply filters by wrapping the query in a conjunction with term queries
+	if filters != "" {
 		finalQuery := bleve.NewConjunctionQuery(q)
-		for _, filter := range filters {
-			if filter.Field == "" {
+		parts := strings.Split(filters, " AND ")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
 				continue
 			}
-			switch value := filter.Value.(type) {
-			case bool:
-				bq := bleve.NewBoolFieldQuery(value)
-				bq.SetField(filter.Field)
+			kv := strings.SplitN(part, " = ", 2)
+			if len(kv) != 2 {
+				continue
+			}
+			field := strings.TrimSpace(kv[0])
+			value := strings.TrimSpace(kv[1])
+
+			switch value {
+			case "true":
+				bq := bleve.NewBoolFieldQuery(true)
+				bq.SetField(field)
 				finalQuery.AddQuery(bq)
-			case string:
-				tq := bleve.NewTermQuery(value)
-				tq.SetField(filter.Field)
-				finalQuery.AddQuery(tq)
+			case "false":
+				bq := bleve.NewBoolFieldQuery(false)
+				bq.SetField(field)
+				finalQuery.AddQuery(bq)
 			default:
-				tq := bleve.NewTermQuery(fmt.Sprint(value))
-				tq.SetField(filter.Field)
+				tq := bleve.NewTermQuery(value)
+				tq.SetField(field)
 				finalQuery.AddQuery(tq)
 			}
 		}
-		searchReq = bleve.NewSearchRequestOptions(finalQuery, limit, offset, false)
-		searchReq.Fields = []string{"*"}
-		// Re-apply sort order (was set on original request which is now replaced)
-		if len(sort) > 0 {
-			var sortOrder bleveSearch.SortOrder
-			for _, s := range sort {
-				field := s
-				desc := false
-				if strings.HasSuffix(s, ":desc") {
-					field = strings.TrimSuffix(s, ":desc")
-					desc = true
-				} else if strings.HasSuffix(s, ":asc") {
-					field = strings.TrimSuffix(s, ":asc")
-				} else {
-					desc = true
-				}
-				sf := &bleveSearch.SortField{Field: field, Desc: desc, Type: bleveSearch.SortFieldAsNumber}
-				sortOrder = append(sortOrder, sf)
-			}
-			searchReq.SortByCustom(sortOrder)
-		}
+		searchReq.Query = finalQuery
 	}
 
 	result, err := c.index.Search(searchReq)
